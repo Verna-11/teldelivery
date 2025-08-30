@@ -69,16 +69,19 @@ async def telegram_webhook(request: Request):
         chat_id = data["message"]["chat"]["id"]
         text = (data["message"].get("text") or "").strip()
 
-        # Initialize user state
+        # Initialize user state if not present
         if chat_id not in user_state:
             user_state[chat_id] = {"step": None, "data": {}}
 
         state = user_state[chat_id]
+        reply = None  # always set once at the start
 
-        reply = None
+        # --- Check for very short input (ignore commands like /start, /book, /mybookings) ---
+        if not text.startswith("/") and len(text) <= 2:
+            reply = "⚠️ Be specific po about sa sagot"
 
         # --- Start ---
-        if text == "/start":
+        elif text == "/start":
             reply = (
                 "👋 Welcome to Delivery Bot!\n\n"
                 "Commands:\n"
@@ -115,12 +118,10 @@ async def telegram_webhook(request: Request):
 
         elif state["step"] == "description":
             state["data"]["description"] = text
-        
-            # calculate distance with ORS
             origin = state["data"]["pick_up"]
             destination = state["data"]["drop_off"]
             km = await get_distance_km(origin, destination)
-        
+
             if km is None:
                 reply = "⚠️ Couldn't calculate distance automatically. Please type distance in km:"
                 state["step"] = "distance"
@@ -128,8 +129,7 @@ async def telegram_webhook(request: Request):
                 fee = BASE_FEE + (km * PER_KM_RATE)
                 state["data"]["distance_km"] = km
                 state["data"]["fee"] = fee
-        
-                # Save booking in Supabase
+
                 supabase.table("bookings").insert({
                     "chat_id": chat_id,
                     "recipient_name": state["data"]["recipient_name"],
@@ -140,7 +140,7 @@ async def telegram_webhook(request: Request):
                     "distance_km": km,
                     "fee": fee
                 }).execute()
-        
+
                 reply = (
                     f"✅ Booking confirmed!\n\n"
                     f"📦 Recipient: {state['data']['recipient_name']}\n"
@@ -151,17 +151,16 @@ async def telegram_webhook(request: Request):
                     f"📏 Distance: {km:.2f} km\n\n"
                     f"💵 Fee: ₱{fee:.2f}"
                 )
-        
-                # Reset user flow
+
                 user_state[chat_id] = {"step": None, "data": {}}
+
         elif state["step"] == "distance":
             try:
                 km = float(text)
                 fee = BASE_FEE + (km * PER_KM_RATE)
                 state["data"]["distance_km"] = km
                 state["data"]["fee"] = fee
-        
-                # Save booking in Supabase
+
                 supabase.table("bookings").insert({
                     "chat_id": chat_id,
                     "recipient_name": state["data"]["recipient_name"],
@@ -172,7 +171,7 @@ async def telegram_webhook(request: Request):
                     "distance_km": km,
                     "fee": fee
                 }).execute()
-        
+
                 reply = (
                     f"✅ Booking confirmed!\n\n"
                     f"📦 Recipient: {state['data']['recipient_name']}\n"
@@ -183,12 +182,12 @@ async def telegram_webhook(request: Request):
                     f"📏 Distance: {km:.2f} km\n\n"
                     f"💵 Fee: ₱{fee:.2f}"
                 )
-        
-                # Reset user state
+
                 user_state[chat_id] = {"step": None, "data": {}}
-        
+
             except ValueError:
                 reply = "❌ Please type a valid number for distance in km (e.g. 3.5)"
+
         # --- My bookings ---
         elif text == "/mybookings":
             try:
@@ -215,7 +214,8 @@ async def telegram_webhook(request: Request):
                 reply = "⚠️ Sorry, there was an error fetching your bookings."
 
         else:
-            reply = "🤖 I don’t understand. Type /book to start a booking or /mybookings to see past bookings."
+            if reply is None:  # don’t overwrite short-text message
+                reply = "🤖 I don’t understand. Type /book to start a booking or /mybookings to see past bookings."
 
         # Send reply
         if reply:
@@ -226,6 +226,7 @@ async def telegram_webhook(request: Request):
                 })
 
     return {"ok": True}
+
 
 
 @app.get("/")
