@@ -65,33 +65,34 @@ async def get_distance_km(origin: str, destination: str):
 async def telegram_webhook(request: Request):
     data = await request.json()
 
+    # --- Handle normal text messages ---
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
         text = (data["message"].get("text") or "").strip()
 
-        # Initialize user state if not present
         if chat_id not in user_state:
             user_state[chat_id] = {"step": None, "data": {}}
 
         state = user_state[chat_id]
-        reply = None  # always set once at the start
+        reply = None
+        reply_markup = None  # new
 
-        # --- Check for very short input (ignore commands like /start, /book, /mybookings) ---
-        if not text.startswith("/") and len(text) <= 2:
-            reply = "⚠️ Be specific po about sa sagot"
-
-        # --- Start ---
-        elif text == "/start":
+        # --- Start command with clickable buttons ---
+        if text == "/start":
             reply = (
                 "👋 Welcome to Delivery Bot!\n\n"
-                "Commands:\n"
-                "📦 /book – Create a new booking\n"
-                "📑 /mybookings – View your past bookings"
+                "Please choose an option below:"
             )
+            reply_markup = {
+                "inline_keyboard": [
+                    [{"text": "📦 Book Delivery", "callback_data": "book"}],
+                    [{"text": "📑 My Bookings", "callback_data": "mybookings"}]
+                ]
+            }
             state["step"] = None
             state["data"] = {}
 
-        # --- Booking flow ---
+        # --- Booking flow (when user actually types /book) ---
         elif text == "/book":
             reply = "📦 Who is the recipient?"
             state["step"] = "recipient"
@@ -188,7 +189,6 @@ async def telegram_webhook(request: Request):
             except ValueError:
                 reply = "❌ Please type a valid number for distance in km (e.g. 3.5)"
 
-        # --- My bookings ---
         elif text == "/mybookings":
             try:
                 res = supabase.table("bookings").select("*").eq("chat_id", chat_id).order("created_at", desc=True).limit(5).execute()
@@ -208,16 +208,61 @@ async def telegram_webhook(request: Request):
                             f"💵 Fee: ₱{b['fee']}\n"
                             f"📅 {b['created_at']}\n\n"
                         )
-
             except Exception as e:
                 logging.error(f"❌ Error fetching bookings: {e}")
                 reply = "⚠️ Sorry, there was an error fetching your bookings."
 
         else:
-            if reply is None:  # don’t overwrite short-text message
+            if reply is None:
                 reply = "🤖 I don’t understand. Type /book to start a booking or /mybookings to see past bookings."
 
-        # Send reply
+        # Send message
+        if reply:
+            payload = {
+                "chat_id": chat_id,
+                "text": reply
+            }
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
+
+            async with httpx.AsyncClient() as client:
+                await client.post(f"{API_URL}/sendMessage", json=payload)
+
+    # --- Handle button presses (inline keyboard) ---
+    elif "callback_query" in data:
+        chat_id = data["callback_query"]["message"]["chat"]["id"]
+        query_data = data["callback_query"]["data"]
+
+        if query_data == "book":
+            user_state[chat_id] = {"step": "recipient", "data": {}}
+            reply = "📦 Who is the recipient?"
+
+        elif query_data == "mybookings":
+            try:
+                res = supabase.table("bookings").select("*").eq("chat_id", chat_id).order("created_at", desc=True).limit(5).execute()
+                bookings = res.data
+
+                if not bookings:
+                    reply = "📑 You don’t have any bookings yet. Tap 'Book Delivery' to create one."
+                else:
+                    reply = "📑 Your recent bookings:\n\n"
+                    for b in bookings:
+                        reply += (
+                            f"📦 Recipient: {b['recipient_name']}\n"
+                            f"👤 Booker: {b['booker_name']}\n"
+                            f"📍 Drop-off: {b['drop_off']}\n"
+                            f"🚚 Pick-up: {b['pick_up']}\n"
+                            f"📝 {b['description']}\n"
+                            f"💵 Fee: ₱{b['fee']}\n"
+                            f"📅 {b['created_at']}\n\n"
+                        )
+            except Exception as e:
+                logging.error(f"❌ Error fetching bookings: {e}")
+                reply = "⚠️ Sorry, there was an error fetching your bookings."
+
+        else:
+            reply = "🤖 Unknown action."
+
         if reply:
             async with httpx.AsyncClient() as client:
                 await client.post(f"{API_URL}/sendMessage", json={
@@ -226,6 +271,7 @@ async def telegram_webhook(request: Request):
                 })
 
     return {"ok": True}
+
 
 
 
