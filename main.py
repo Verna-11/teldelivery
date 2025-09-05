@@ -137,7 +137,7 @@ async def telegram_webhook(request: Request):
                 fee = BASE_FEE + (km * PER_KM_RATE)
                 state["data"]["distance_km"] = km
                 state["data"]["fee"] = fee
-
+#order key
                 order_key = generate_order_key()
                 supabase.table("bookings").insert({
                     "chat_id": chat_id,
@@ -150,7 +150,7 @@ async def telegram_webhook(request: Request):
                     "distance_km": km,
                     "fee": fee
                 }).execute()
-
+                
                 reply = (
                     f"✅ Booking confirmed!\n\n"
                     f"🆔 Order Key: {order_key}\n"
@@ -162,6 +162,7 @@ async def telegram_webhook(request: Request):
                     f"📏 Distance: {km:.2f} km\n\n"
                     f"💵 Fee: ₱{fee:.2f}"
                 )
+
 
                 user_state[chat_id] = {"step": None, "data": {}}
 
