@@ -1,5 +1,7 @@
 import os
 import logging
+import uuid
+import datetime
 from fastapi import FastAPI, Request
 import httpx
 from supabase import create_client, Client
@@ -60,6 +62,11 @@ async def get_distance_km(origin: str, destination: str):
             return meters / 1000  # convert to km
         except Exception:
             return None
+
+def generate_order_key():
+    today = datetime.datetime.now().strftime("%Y%m%d")
+    short_id = str(uuid.uuid4())[:8].upper()
+    return f"ORD-{today}-{short_id}"
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -131,8 +138,10 @@ async def telegram_webhook(request: Request):
                 state["data"]["distance_km"] = km
                 state["data"]["fee"] = fee
 
+                order_key = generate_order_key()
                 supabase.table("bookings").insert({
                     "chat_id": chat_id,
+                    "order_key": order_key,
                     "recipient_name": state["data"]["recipient_name"],
                     "booker_name": state["data"]["booker_name"],
                     "drop_off": state["data"]["drop_off"],
@@ -144,6 +153,7 @@ async def telegram_webhook(request: Request):
 
                 reply = (
                     f"✅ Booking confirmed!\n\n"
+                    f"🆔 Order Key: {order_key}\n"
                     f"📦 Recipient: {state['data']['recipient_name']}\n"
                     f"👤 Booker: {state['data']['booker_name']}\n"
                     f"📍 Drop-off: {state['data']['drop_off']}\n"
